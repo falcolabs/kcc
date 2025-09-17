@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use scratch_ast::model::{Evaluable, RichValue};
+use scratch_ast::{
+    errors::ScratchError,
+    model::{Evaluable, RichValue},
+};
 
-use crate::vm::{errors::VMError, transform::VMStartup};
+use crate::vm::transform::VMStartup;
 
 pub mod argaccess;
 pub mod bytecode;
-pub mod errors;
 pub mod intepreter;
 pub mod transform;
 
-pub type ScratchResult = Result<(), VMError>;
+pub type ScratchResult = Result<(), ScratchError>;
 
 impl crate::vm::bytecode::VMGlobalState {
     pub fn run(startup: VMStartup) {
@@ -22,14 +24,7 @@ impl crate::vm::bytecode::VMGlobalState {
                 for thread in threads {
                     let cgs = Arc::clone(&global_state);
                     let cls = Arc::clone(&local_state);
-                    scope.spawn(move || if let Err(e) = intepreter::exec_thread(thread, cgs, cls) {
-                        println!("Runtime error occured. Traceback:");
-                        for t in e.trace {
-                            println!("at {}", t.location);
-                            println!("    {:?}: {}", t.error_type, t.description);
-                        }
-                        panic!("See the above traceback for details.")
-                    });
+                    scope.spawn(move || intepreter::exec_thread(thread, cgs, cls).unwrap());
                 }
             }
         });

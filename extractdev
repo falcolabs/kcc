@@ -1,2 +1,2 @@
 #!/bin/env sh
-rm -rf __tmp && unzip tests/invest.sb3 -d __tmp
+rm -rf __tmp && unzip invest.sb3 -d __tmp

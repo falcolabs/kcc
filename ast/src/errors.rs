@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Clone, Debug, PartialEq, Eq, Copy)]
 pub enum ErrorType {
     TypeError,
@@ -14,11 +16,24 @@ pub struct Trace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VMError {
+pub struct ScratchError {
     pub trace: Vec<Trace>,
 }
 
-impl VMError {
+impl std::error::Error for ScratchError {}
+
+impl Display for ScratchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Runtime error occured. Traceback:\n")?;
+        for t in &self.trace {
+            write!(f, "at {}\n", t.location)?;
+            write!(f, "    {:?}: {}\n", t.error_type, t.description)?;
+        }
+        write!(f, "See the above traceback for details.\n")
+    }
+}
+
+impl ScratchError {
     pub fn syntax_error<T: ToString, Q: ToString>(description: T, location: Q) -> Self {
         Self {
             trace: vec![Trace {

@@ -6,26 +6,26 @@ use scratch_ast::model::{PrimitiveValue, RichValue};
 use crate::vm::{
     bytecode::{Expression, VMEvaluable, VMValuePointer},
     intepreter::{eval_exp, VMState},
-    VMError,
+    ScratchError,
 };
 
 #[inline]
-pub fn rich_value_to_string(rval: &RichValue) -> Result<String, VMError> {
+pub fn rich_value_to_string(rval: &RichValue) -> Result<String, ScratchError> {
     Ok(Into::<PrimitiveValue>::into(rval.clone()).into())
 }
 
 #[inline]
-pub fn rich_value_to_f64(rval: &RichValue) -> Result<f64, VMError> {
+pub fn rich_value_to_f64(rval: &RichValue) -> Result<f64, ScratchError> {
     Into::<PrimitiveValue>::into(rval.clone())
         .try_into()
-        .map_err(|e| VMError::type_error(e, format!("casting rich value {rval:?} to float")))
+        .map_err(|e| ScratchError::type_error(e, format!("casting rich value {rval:?} to float")))
 }
 
 #[inline]
-pub fn rich_value_to_bool(rval: &RichValue) -> Result<bool, VMError> {
+pub fn rich_value_to_bool(rval: &RichValue) -> Result<bool, ScratchError> {
     Into::<PrimitiveValue>::into(rval.clone())
         .try_into()
-        .map_err(|e| VMError::type_error(e, format!("casting rich value {rval:?} to bool")))
+        .map_err(|e| ScratchError::type_error(e, format!("casting rich value {rval:?} to bool")))
 }
 
 impl Expression {
@@ -34,8 +34,11 @@ impl Expression {
         self.dependencies.get(argname)
     }
 
-    pub fn argstr(&self, argname: &str, state: &VMState) -> Result<String, VMError> {
-        match self.argraw(argname).ok_or(VMError::not_found(format!("argument '{argname}' not found"), format!("lookup '{argname}'")))? {
+    pub fn argstr(&self, argname: &str, state: &VMState) -> Result<String, ScratchError> {
+        match self.argraw(argname).ok_or(ScratchError::not_found(
+            format!("argument '{argname}' not found"),
+            format!("lookup '{argname}'"),
+        ))? {
             VMEvaluable::Bare(rv) => rich_value_to_string(rv),
             VMEvaluable::Field(f) => Ok(f.display_value.clone()),
             VMEvaluable::Pointer(v) => match &v {
@@ -44,33 +47,60 @@ impl Expression {
                     if let Some(var) = state.local_state.read().variables.get(id) {
                         pv = var.read().clone();
                     } else {
-                        pv = state.global_state
+                        pv = state
+                            .global_state
                             .read()
                             .variables
                             .get(id)
-                            .ok_or(VMError::not_found(format!("variable {name} not found"), format!("fetching '{argname}' (id={id})")))?
+                            .ok_or(ScratchError::not_found(
+                                format!("variable {name} not found"),
+                                format!("fetching '{argname}' (id={id})"),
+                            ))?
                             .read()
                             .clone()
                     }
                     Ok(pv.into())
                 }
-                VMValuePointer::List { id, .. } => Err(VMError::type_error(
-                    format!("lists cannot be converted into strings. Argument '{argname}' points to a list, you may have accidentally dragged a list reporter inside a block slot that only accept strings."),
-                    format!("fetching argument '{argname}' (id={id}) as string")
-                )),
+                VMValuePointer::List { id, .. } => {
+                    let pv: String;
+                    if let Some(var) = state.local_state.read().lists.get(id) {
+                        pv = var
+                            .read()
+                            .iter()
+                            .map(|e| e.read().clone().into())
+                            .collect::<Vec<String>>()
+                            .join(" ");
+                    } else {
+                        pv = state
+                            .global_state
+                            .read()
+                            .lists
+                            .get(id)
+                            .ok_or(ScratchError::not_found(
+                                format!("list {argname} not found"),
+                                format!("fetching '{argname}' (id={id})"),
+                            ))?
+                            .read()
+                            .iter()
+                            .map(|e| e.read().clone().into())
+                            .collect::<Vec<String>>()
+                            .join(" ")
+                    }
+                    Ok(pv)
+                }
                 VMValuePointer::Broadcast { name, .. } => Ok(name.to_string()),
             },
             VMEvaluable::Block(b) => rich_value_to_string(&eval_exp(b, state)?),
         }
     }
 
-    pub fn argfloat(&self, argname: &str, state: &VMState) -> Result<f64, VMError> {
-        match self.argraw(argname).ok_or(VMError::not_found(format!("argument '{argname}' not found"), format!("lookup '{argname}'")))? {
+    pub fn argfloat(&self, argname: &str, state: &VMState) -> Result<f64, ScratchError> {
+        match self.argraw(argname).ok_or(ScratchError::not_found(format!("argument '{argname}' not found"), format!("lookup '{argname}'")))? {
             VMEvaluable::Bare(rv) => rich_value_to_f64(rv),
             VMEvaluable::Field(f) => f
                 .display_value
                 .parse::<f64>()
-                .map_err(|e| VMError::type_error(format!("cannot convert argument to float: {e}"), format!("fetching field '{argname}'"))),
+                .map_err(|e| ScratchError::type_error(format!("cannot convert argument to float: {e}"), format!("fetching field '{argname}'"))),
             VMEvaluable::Pointer(v) => match &v {
                 VMValuePointer::Variable { id, name } => {
                     let pv: PrimitiveValue;
@@ -81,17 +111,17 @@ impl Expression {
                             .read()
                             .variables
                             .get(id)
-                            .ok_or(VMError::not_found(format!("variable '{name}' not found"), format!("fetching '{argname}' (id={id}) as string")))?
+                            .ok_or(ScratchError::not_found(format!("variable '{name}' not found"), format!("fetching '{argname}' (id={id}) as string")))?
                             .read()
                             .clone()
                     }
-                    pv.try_into().map_err(|e| VMError::type_error(e, format!("fetching argument '{argname}' (id={id})")))
+                    pv.try_into().map_err(|e| ScratchError::type_error(e, format!("fetching argument '{argname}' (id={id})")))
                 }
-                VMValuePointer::List { id, .. } => Err(VMError::type_error(
+                VMValuePointer::List { id, .. } => Err(ScratchError::type_error(
                     format!("lists cannot be converted into float. Argument '{argname}' points to a list, you may have accidentally dragged a list reporter inside a block slot that only accept strings."),
                     format!("fetching argument '{argname}' (id={id}) as string")
                 )),
-                VMValuePointer::Broadcast { .. } => Err(VMError::type_error(
+                VMValuePointer::Broadcast { .. } => Err(ScratchError::type_error(
                     format!("broadcasts cannot be converted into float. Argument '{argname}' points to a broadcast, you may have accidentally dragged a broadcast inside a block slot that only accept strings."),
                     format!("fetching argument '{argname}' as string")
                 )),
@@ -100,8 +130,8 @@ impl Expression {
         }
     }
 
-    pub fn argbool(&self, argname: &str, state: &VMState) -> Result<bool, VMError> {
-        match self.argraw(argname).ok_or(VMError::not_found(format!("argument '{argname}' not found"), format!("lookup '{argname}'")))? {
+    pub fn argbool(&self, argname: &str, state: &VMState) -> Result<bool, ScratchError> {
+        match self.argraw(argname).ok_or(ScratchError::not_found(format!("argument '{argname}' not found"), format!("lookup '{argname}'")))? {
             VMEvaluable::Bare(rv) => rich_value_to_bool(rv),
             VMEvaluable::Field(f) => if f
                 .display_value == "true" {
@@ -109,7 +139,7 @@ impl Expression {
                 } else if f.display_value == "false" {
                     Ok(false)
                 } else {
-                    Err(VMError::type_error(format!("cannot convert argument to float {argname}='{:#?}'", f.display_value), format!("fetching field '{argname}'")))
+                    Err(ScratchError::type_error(format!("cannot convert argument to float {argname}='{:#?}'", f.display_value), format!("fetching field '{argname}'")))
                 }
             VMEvaluable::Pointer(v) => match &v {
                 VMValuePointer::Variable { id, name } => {
@@ -121,17 +151,17 @@ impl Expression {
                             .read()
                             .variables
                             .get(id)
-                            .ok_or(VMError::not_found(format!("variable '{name}' not found"), format!("fetching '{argname}' (id={id}) as bool")))?
+                            .ok_or(ScratchError::not_found(format!("variable '{name}' not found"), format!("fetching '{argname}' (id={id}) as bool")))?
                             .read()
                             .clone()
                     }
-                    pv.try_into().map_err(|e| VMError::type_error(e, format!("fetching argument '{argname}' (id={id})")))
+                    pv.try_into().map_err(|e| ScratchError::type_error(e, format!("fetching argument '{argname}' (id={id})")))
                 }
-                VMValuePointer::List { id, .. } => Err(VMError::type_error(
+                VMValuePointer::List { id, .. } => Err(ScratchError::type_error(
                     format!("lists cannot be converted into float. Argument '{argname}' points to a list, you may have accidentally dragged a list reporter inside a block slot that only accept strings."),
                     format!("fetching argument '{argname}' (id={id}) as string")
                 )),
-                VMValuePointer::Broadcast { .. } => Err(VMError::type_error(
+                VMValuePointer::Broadcast { .. } => Err(ScratchError::type_error(
                     format!("broadcasts cannot be converted into float. Argument '{argname}' points to a broadcast, you may have accidentally dragged a broadcast inside a block slot that only accept strings."),
                     format!("fetching argument '{argname}' as string")
                 )),
@@ -140,12 +170,12 @@ impl Expression {
         }
     }
 
-    pub fn argptr(&self, argname: &str) -> Result<VMValuePointer, VMError> {
-        match self.argraw(argname).ok_or(VMError::not_found(
+    pub fn argptr(&self, argname: &str) -> Result<VMValuePointer, ScratchError> {
+        match self.argraw(argname).ok_or(ScratchError::not_found(
             format!("argument '{argname}' not found"),
             format!("lookup '{argname}'"),
         ))? {
-            VMEvaluable::Bare(rv) => Err(VMError::type_error(
+            VMEvaluable::Bare(rv) => Err(ScratchError::type_error(
                 format!("cannot convert bare value {argname}={rv:#?} to a pointer"),
                 format!("fetfching '{argname}'={rv:#?} as pointer"),
             )),
@@ -153,7 +183,7 @@ impl Expression {
                 if let Some(p) = &f.pointer {
                     Ok(p.clone())
                 } else {
-                    Err(VMError::type_error(
+                    Err(ScratchError::type_error(
                         format!(
                             "field {argname} contains the literal {:#?}, not a pointer",
                             f.display_value
@@ -163,7 +193,7 @@ impl Expression {
                 }
             }
             VMEvaluable::Pointer(v) => Ok(v.clone()),
-            VMEvaluable::Block(b) => Err(VMError::type_error(
+            VMEvaluable::Block(b) => Err(ScratchError::type_error(
                 format!("cannot convert or evaluate block {argname}={b:#?} to a pointer"),
                 format!("fetfching '{argname}'={b} as pointer"),
             )),
@@ -177,7 +207,7 @@ impl Expression {
         argname: &str,
         state: &VMState,
         exp: &Expression,
-    ) -> Result<f64, VMError> {
+    ) -> Result<f64, ScratchError> {
         self.argfloat(argname, state).map_err(|e| {
             e.push_not_found(
                 format!("required argument {argname} not found"),
@@ -188,9 +218,9 @@ impl Expression {
 
     /// argraw with nice error.
     /// utility function.
-    pub fn sargraw(&self, argname: &str, exp: &Expression) -> Result<&VMEvaluable, VMError> {
+    pub fn sargraw(&self, argname: &str, exp: &Expression) -> Result<&VMEvaluable, ScratchError> {
         self.argraw(argname)
-            .ok_or(VMError::not_found(
+            .ok_or(ScratchError::not_found(
                 format!("argument '{argname}' not found"),
                 format!("lookup '{argname}'"),
             ))
@@ -209,7 +239,7 @@ impl Expression {
         argname: &str,
         state: &VMState,
         exp: &Expression,
-    ) -> Result<String, VMError> {
+    ) -> Result<String, ScratchError> {
         self.argstr(argname, state).map_err(|e| {
             e.push_not_found(
                 format!("required argument {argname} not found"),
@@ -225,7 +255,7 @@ impl Expression {
         argname: &str,
         state: &VMState,
         exp: &Expression,
-    ) -> Result<bool, VMError> {
+    ) -> Result<bool, ScratchError> {
         self.argbool(argname, state).map_err(|e| {
             e.push_not_found(
                 format!("required argument {argname} not found"),
@@ -234,7 +264,7 @@ impl Expression {
         })
     }
 
-    pub fn sargptr(&self, argname: &str, exp: &Expression) -> Result<VMValuePointer, VMError> {
+    pub fn sargptr(&self, argname: &str, exp: &Expression) -> Result<VMValuePointer, ScratchError> {
         self.argptr(argname).map_err(|e| {
             e.push_not_found(
                 format!("required argument {argname} not found"),
@@ -245,7 +275,7 @@ impl Expression {
 }
 
 impl VMValuePointer {
-    pub fn resolve_var(&self, state: &VMState) -> Result<PrimitiveValue, VMError> {
+    pub fn resolve_var(&self, state: &VMState) -> Result<PrimitiveValue, ScratchError> {
         if let VMValuePointer::Variable { name, id } = &self {
             let pv: PrimitiveValue;
             if let Some(var) = state.local_state.read().variables.get(id) {
@@ -256,7 +286,7 @@ impl VMValuePointer {
                     .read()
                     .variables
                     .get(id)
-                    .ok_or(VMError::not_found(
+                    .ok_or(ScratchError::not_found(
                         format!("value pointed to by variable pointer '{name}' not found"),
                         format!("resolving variable pointer '{name}' (id={id})"),
                     ))?
@@ -264,17 +294,17 @@ impl VMValuePointer {
                     .clone()
             }
             return pv.try_into().map_err(|e| {
-                VMError::type_error(e, format!("fetching argument '{name}' (id={id})"))
+                ScratchError::type_error(e, format!("fetching argument '{name}' (id={id})"))
             });
         }
-        Err(VMError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
+        Err(ScratchError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
     }
 
     pub fn set_var(
         &self,
         state: &VMState,
         value: PrimitiveValue,
-    ) -> Result<PrimitiveValue, VMError> {
+    ) -> Result<PrimitiveValue, ScratchError> {
         if let VMValuePointer::Variable { name, id } = &self {
             if let Some(var) = state.local_state.write().variables.get(id) {
                 *var.write() = value.clone();
@@ -284,7 +314,7 @@ impl VMValuePointer {
                     .write()
                     .variables
                     .get_mut(id)
-                    .ok_or(VMError::not_found(
+                    .ok_or(ScratchError::not_found(
                         format!("value pointed to by variable pointer '{name}' not found"),
                         format!("resolving variable pointer '{name}' (id={id})"),
                     ))?
@@ -292,20 +322,20 @@ impl VMValuePointer {
             }
             return Ok(value);
         }
-        Err(VMError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
+        Err(ScratchError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
     }
 
     pub fn resolve_list(
         &self,
         state: &VMState,
-    ) -> Result<Arc<RwLock<Vec<RwLock<PrimitiveValue>>>>, VMError> {
+    ) -> Result<Arc<RwLock<Vec<RwLock<PrimitiveValue>>>>, ScratchError> {
         if let VMValuePointer::List { name, id, .. } = &self {
             let pv: Arc<RwLock<Vec<RwLock<PrimitiveValue>>>>;
             if let Some(var) = state.local_state.read().lists.get(id) {
                 pv = Arc::clone(var);
             } else {
                 pv = Arc::clone(state.global_state.read().lists.get(id).ok_or(
-                    VMError::not_found(
+                    ScratchError::not_found(
                         format!("value pointed to by list pointer  '{name}' not found"),
                         format!("resolving list pointer '{name}' (id={id}) as string"),
                     ),
@@ -313,10 +343,10 @@ impl VMValuePointer {
             }
             return Ok(pv);
         }
-        Err(VMError::type_error(format!("tried to resolve pointer into list, but it does not point to a list (it pointed to a {self:?})"), format!("resolving into list {self:#?}")))
+        Err(ScratchError::type_error(format!("tried to resolve pointer into list, but it does not point to a list (it pointed to a {self:?})"), format!("resolving into list {self:#?}")))
     }
 
-    pub fn resolve_broadcast(&self, state: &VMState) -> Result<String, VMError> {
+    pub fn resolve_broadcast(&self, state: &VMState) -> Result<String, ScratchError> {
         if let VMValuePointer::Broadcast { name, id } = &self {
             let pv: String;
             if let Some(var) = state.local_state.read().broadcasts.get(id) {
@@ -327,7 +357,7 @@ impl VMValuePointer {
                     .read()
                     .broadcasts
                     .get(id)
-                    .ok_or(VMError::not_found(
+                    .ok_or(ScratchError::not_found(
                         format!("value pointed to by variable pointer '{name}' not found"),
                         format!("resolving variable pointer '{name}' (id={id})"),
                     ))?
@@ -335,12 +365,12 @@ impl VMValuePointer {
             }
             return Ok(pv);
         }
-        Err(VMError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
+        Err(ScratchError::type_error(format!("tried to resolve pointer into var, but it does not point to a variable (it pointed to a {self:?})"), format!("resolving into var {self:#?}")))
     }
 }
 
 impl VMEvaluable {
-    pub fn eval(&self, state: &VMState) -> Result<RichValue, VMError> {
+    pub fn eval(&self, state: &VMState) -> Result<RichValue, ScratchError> {
         match self {
             VMEvaluable::Bare(rv) => Ok(rv.clone()),
             VMEvaluable::Field(f) => Ok(match &f.pointer {
@@ -361,13 +391,13 @@ impl VMEvaluable {
                             .read()
                             .variables
                             .get(id)
-                            .ok_or(VMError::not_found(format!("variable {name} not found"), format!("fetching '{self:?}' (id={id})")))?
+                            .ok_or(ScratchError::not_found(format!("variable {name} not found"), format!("fetching '{self:?}' (id={id})")))?
                             .read()
                             .clone()
                     }
                     Ok(pv.into())
                 }
-                VMValuePointer::List { id, .. } => Err(VMError::type_error(
+                VMValuePointer::List { id, .. } => Err(ScratchError::type_error(
                     format!("lists cannot be converted into strings. '{self:?}' points to a list, you may have accidentally dragged a list reporter inside a block slot that only accept strings."),
                     format!("fetching '{self:?}' (id={id}) as string")
                 )),
@@ -379,7 +409,7 @@ impl VMEvaluable {
 }
 
 impl VMState {
-    pub fn resolve_var(&self, pointer: VMValuePointer) -> Result<PrimitiveValue, VMError> {
+    pub fn resolve_var(&self, pointer: VMValuePointer) -> Result<PrimitiveValue, ScratchError> {
         pointer.resolve_var(self)
     }
 
@@ -387,7 +417,7 @@ impl VMState {
         &self,
         pointer: VMValuePointer,
         value: PrimitiveValue,
-    ) -> Result<PrimitiveValue, VMError> {
+    ) -> Result<PrimitiveValue, ScratchError> {
         pointer.set_var(self, value)
     }
 }

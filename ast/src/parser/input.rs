@@ -49,21 +49,16 @@ impl<'de> Visitor<'de> for InputVisitor {
     {
         let shadow_type: ShadowType = seq.next_element()?.expect("Invalid shadow type");
         Ok(match shadow_type {
-            ShadowType::Literal => {
-                Shadow {
-                    shadow_type,
-                    value: seq.next_element()?.expect("Malformed shadow array"),
-                    overridden_value: None,
-                }
-            }
-            ShadowType::FilledEmptySlot => todo!(),
-            ShadowType::OverrideValue => {
-                Shadow {
-                    shadow_type,
-                    value: seq.next_element()?.expect("Malformed shadow array"),
-                    overridden_value: seq.next_element()?.expect("Malformed shadow array"),
-                }
-            }
+            ShadowType::Literal | ShadowType::FilledEmptySlot => Shadow {
+                shadow_type,
+                value: seq.next_element()?.expect("Malformed shadow array"),
+                overridden_value: None,
+            },
+            ShadowType::OverrideValue => Shadow {
+                shadow_type,
+                value: seq.next_element()?.expect("Malformed shadow array"),
+                overridden_value: seq.next_element()?.expect("Malformed shadow array"),
+            },
         })
     }
 }

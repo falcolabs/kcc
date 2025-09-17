@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::errors::ScratchError;
+
 use super::BlockType;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -237,17 +239,65 @@ impl From<PrimitiveValue> for String {
     }
 }
 
-impl TryInto<f64> for PrimitiveValue {
-    type Error = String;
+impl TryFrom<PrimitiveValue> for f64 {
+    type Error = ScratchError;
 
-    fn try_into(self) -> Result<f64, Self::Error> {
-        match self {
-            PrimitiveValue::String(s) => s
-                .parse()
-                .map_err(|e| format!("Cannot convert {:#?} to an f64: {e}", s)),
+    fn try_from(value: PrimitiveValue) -> Result<Self, Self::Error> {
+        match value {
+            PrimitiveValue::String(s) => s.parse().map_err(|e| {
+                ScratchError::type_error(
+                    format!("Cannot convert {:#?} to an f64: {e}", s),
+                    format!("converting {:#?} to an f64: {e}", s),
+                )
+            }),
             PrimitiveValue::Integer(i) => Ok(i as f64),
             PrimitiveValue::Number(i) => Ok(i),
         }
+    }
+}
+
+impl TryFrom<RichValue> for f64 {
+    type Error = ScratchError;
+
+    fn try_from(value: RichValue) -> Result<Self, Self::Error> {
+        let pv: PrimitiveValue = value.into();
+        pv.try_into()
+    }
+}
+
+impl From<f64> for PrimitiveValue {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<f64> for RichValue {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<i64> for PrimitiveValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<i64> for RichValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<String> for PrimitiveValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<String> for RichValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
     }
 }
 
@@ -368,8 +418,10 @@ impl RichValue {
         if let Self::Number(r) = self.clone() {
             return Ok(r);
         }
-        if let Self::String(r) = self.clone() && let Ok(f) = r.parse::<f64>() {
-                return Ok(f);
+        if let Self::String(r) = self.clone()
+            && let Ok(f) = r.parse::<f64>()
+        {
+            return Ok(f);
         }
         Err("PartialValue type mismatch.")
     }

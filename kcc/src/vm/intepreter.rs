@@ -7,12 +7,12 @@ use std::{
 use log::debug;
 use parking_lot::RwLock;
 use rand::Rng;
-use scratch_ast::model::{BlockType, RichValue};
-
-use crate::vm::{
-    bytecode::{Expression, VMGlobalState, VMLocalState, VMThread},
-    VMError,
+use scratch_ast::{
+    errors::ScratchError,
+    model::{BlockType, RichValue},
 };
+
+use crate::vm::bytecode::{Expression, VMGlobalState, VMLocalState, VMThread};
 
 use super::ScratchResult;
 
@@ -43,7 +43,7 @@ pub fn exec_thread(
 }
 
 #[allow(unused)]
-pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, VMError> {
+pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, ScratchError> {
     debug!("exec {}", exp);
     match exp.opcode {
         BlockType::MotionMoveSteps => todo!(),
@@ -125,7 +125,7 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, VMError>
             SystemTime::now()
                 .duration_since(UNIX_EPOCH + Duration::from_secs(START_OF_2000_TIMESTAMP))
                 .map_err(|e| {
-                    VMError::internal(
+                    ScratchError::internal(
                         format!("time travelled into the past: {e}"),
                         format!(
                             "<vm::intepreter::SensingDaysSince2000> executing block {:?} (id={})",
@@ -246,7 +246,7 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, VMError>
                 "log" => Ok(RichValue::Number(n.log10())),
                 "e ^" => Ok(RichValue::Number(n.exp())),
                 "10 ^" => Ok(RichValue::Number(n.powi(10))),
-                _ => Err(VMError::syntax_error(
+                _ => Err(ScratchError::syntax_error(
                     format!("unknown math operator {op}"),
                     format!("block {:?} (id={})", exp.opcode, exp.original_block.obj_id),
                 )),
@@ -263,24 +263,96 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, VMError>
         BlockType::ControlDeleteThisClone => todo!(),
         BlockType::DataSetVariableTo => {
             let value = exp.sargraw("VALUE", exp)?.eval(state)?;
-            let var = exp.argptr("VARIABLE")?;
-            
+            let var = exp.sargptr("VARIABLE", exp)?;
+
             state.set_var(var, value.into())?;
 
             Ok(RichValue::success())
         }
-        BlockType::DataChangeVariableBy => todo!(),
+        BlockType::DataChangeVariableBy => {
+            let delta: f64 = exp.sargraw("VALUE", exp)?.eval(state)?.try_into()?;
+            let var = exp.sargptr("VARIABLE", exp)?;
+            let src: f64 = var.resolve_var(state)?.try_into()?;
+            state.set_var(var, (src + delta).into())?;
+
+            Ok(RichValue::success())
+        }
         BlockType::DataShowVariable => todo!(),
         BlockType::DataHideVariable => todo!(),
-        BlockType::DataAddToList => todo!(),
-        BlockType::DataListDeleteElement => todo!(),
-        BlockType::DataListClear => todo!(),
-        BlockType::DataListInsertAt => todo!(),
-        BlockType::DataListReplaceItem => todo!(),
-        BlockType::DataListItemAt => todo!(),
-        BlockType::DataListIndexOf => todo!(),
-        BlockType::DataListLengthOf => todo!(),
-        BlockType::DataListContainsItem => todo!(),
+        BlockType::DataAddToList => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let item = exp.sargraw("ITEM", exp)?.eval(state)?;
+            list.write().push(RwLock::new(item.into()));
+            Ok(RichValue::success())
+        }
+        BlockType::DataListDeleteElement => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let index: usize = exp.sargfloat("INDEX", state, exp)? as usize;
+            list.write().remove(index);
+            Ok(RichValue::success())
+        }
+        BlockType::DataListClear => {
+            let list = exp.argptr("LIST")?.resolve_list(state)?;
+            list.write().clear();
+            Ok(RichValue::success())
+        }
+        BlockType::DataListInsertAt => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let item = exp.sargraw("ITEM", exp)?.eval(state)?;
+            let index: usize = exp.sargfloat("INDEX", state, exp)? as usize;
+            list.write().insert(index, RwLock::new(item.into()));
+            Ok(RichValue::success())
+        }
+        BlockType::DataListReplaceItem => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let item = exp.sargraw("ITEM", exp)?.eval(state)?;
+            let index: usize = exp.sargfloat("INDEX", state, exp)? as usize;
+            std::mem::replace(
+                list.write().get_mut(index).ok_or(ScratchError::internal(
+                    "failed to get mutable reference of vecitem",
+                    "interpreter, DataListReplaceItem",
+                ))?,
+                RwLock::new(item.into()),
+            );
+            Ok(RichValue::success())
+        }
+        BlockType::DataListItemAt => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let index: usize = exp.sargfloat("INDEX", state, exp)? as usize;
+            let result = match list.read().get(index) {
+                Some(v) => v.read().clone().into(),
+                None => RichValue::String("".to_string()),
+            };
+            Ok(result)
+        }
+        BlockType::DataListIndexOf => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let item: RichValue = exp.sargraw("ITEM", exp)?.eval(state)?;
+            for (i, e) in list.read().iter().enumerate() {
+                let inner: RichValue = e.read().clone().into();
+                if inner == item {
+                    return Ok(RichValue::Number(i as f64));
+                }
+            }
+            Ok(RichValue::Number(0.0))
+        }
+        BlockType::DataListLengthOf => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let r = list.read().len() as f64;
+            Ok(RichValue::Number(r))
+        }
+        BlockType::DataListContainsItem => {
+            let list = exp.sargptr("LIST", exp)?.resolve_list(state)?;
+            let item: RichValue = exp.sargraw("ITEM", exp)?.eval(state)?;
+
+            for i in list.read().iter() {
+                let inner: RichValue = i.read().clone().into();
+                if inner == item {
+                    return Ok(RichValue::Boolean(true));
+                }
+            }
+            Ok(RichValue::Boolean(false))
+        }
         BlockType::DataListShow => todo!(),
         BlockType::DataListHide => todo!(),
 
