@@ -1,4 +1,4 @@
-use log::warn;
+use log::{info};
 use serde::Deserialize;
 use serde::ser::SerializeSeq;
 use serde::{Serialize, de::Visitor};
@@ -166,35 +166,35 @@ impl<'de> Visitor<'de> for ValueVisitor {
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             5 => Ok(Evaluable::Bare(RichValue::PositiveNumber(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             6 => Ok(Evaluable::Bare(RichValue::PositiveInteger(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into an integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with the llk/scratch-vm.", e); 0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into an integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with llk/scratch-vm.", e); 0}),
             ))),
             7 => Ok(Evaluable::Bare(RichValue::Integer(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with the llk/scratch-vm.", e); 0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with llk/scratch-vm.", e); 0}),
             ))),
             8 => Ok(Evaluable::Bare(RichValue::Angle(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 rad to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 rad to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             9 => Ok(Evaluable::Bare(RichValue::Color(
                 seq.next_element().unwrap().expect("Malformed project file"),
@@ -295,35 +295,35 @@ impl<'de> Visitor<'de> for ShadowValueVisitor {
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             5 => Ok(ShadowValue::Bare(RichValue::PositiveNumber(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive number; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             6 => Ok(ShadowValue::Bare(RichValue::PositiveInteger(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into an integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with the llk/scratch-vm.", e); 0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into an integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with llk/scratch-vm.", e); 0}),
             ))),
             7 => Ok(ShadowValue::Bare(RichValue::Integer(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with the llk/scratch-vm.", e); 0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0 to maintain compatibility with llk/scratch-vm.", e); 0}),
             ))),
             8 => Ok(ShadowValue::Bare(RichValue::Angle(
                 seq.next_element::<String>()
                     .unwrap()
                     .unwrap()
                     .parse()
-                    .unwrap_or_else(|e| {warn!("{}\nValue of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 rad to maintain compatibility with the llk/scratch-vm.", e); 0.0}),
+                    .unwrap_or_else(|e| {info!("{}; the value of the input cannot be parsed into a positive integer; however it may still work because it has been overriden by a reporter (rounded edges) block. It will be parsed as 0.0 rad to maintain compatibility with llk/scratch-vm.", e); 0.0}),
             ))),
             9 => Ok(ShadowValue::Bare(RichValue::Color(
                 seq.next_element().unwrap().expect("Malformed project file"),

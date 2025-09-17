@@ -7,3 +7,5 @@ default-members = ["kcc"]
 opt-level = 3
 codegen-units = 1
 lto = "thin"
+strip = true
+panic = "abort"

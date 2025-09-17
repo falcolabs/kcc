@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use colored::Colorize;
 use hashbrown::HashMap;
 use parking_lot::RwLock;
 use scratch_ast::prelude::*;
@@ -126,7 +127,11 @@ impl VMEvaluable {
                         global_broadcast_numid_map,
                         block_list,
                     ),
-                    original_block: Box::new(block.to_owned()),
+                    original_block: Box::new({
+                        let mut o = block.to_owned();
+                        o.obj_id = b.id;
+                        o
+                    }),
                 })
             }
         }
@@ -142,41 +147,105 @@ pub struct Expression {
 
 impl std::fmt::Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:4}::{:?}    {}", self.original_block.obj_id, self.opcode, {
-            let mut output = Vec::new();
+        write!(
+            f,
+            "{:>2}{}{}{}{}{}",
+            self.original_block.obj_id.cyan(),
+            ".".black(),
+            format!("{:?}", self.opcode).bright_green(),
+            "(".black(),
+            {
+                let mut output = Vec::new();
 
-            for (name, val) in &self.dependencies {
-                output.push(format!(
-                    "{name}={}",
-                    match val {
-                        VMEvaluable::Bare(rv) => format!("[ {rv:?} ]"),
-                        VMEvaluable::Block(b) =>
-                            format!("( {:?}::{}(...) )", b.opcode, b.original_block.obj_id),
-                        VMEvaluable::Pointer(VMValuePointer::List { name, id }) =>
-                            format!("( (list*) {}::{} )", name, id),
-                        VMEvaluable::Pointer(VMValuePointer::Variable { name, id }) =>
-                            format!("( (var*) {}::{} )", name, id),
-                        VMEvaluable::Pointer(VMValuePointer::Broadcast { name, id }) =>
-                            format!("( (broadcast*) {}::{} )", name, id),
-                        VMEvaluable::Field(f) => format!(
-                            "[ {}{} ]",
-                            f.display_value,
-                            match &f.pointer {
-                                Some(VMValuePointer::List { name, id }) =>
-                                    format!(", ( (list*) {}::{} )", name, id),
-                                Some(VMValuePointer::Variable { name, id }) =>
-                                    format!(", ( (var*) {}::{} )", name, id),
-                                Some(VMValuePointer::Broadcast { name, id }) =>
-                                    format!(", ( (broadcast*) {}::{} )", name, id),
-                                None => "".to_string(),
-                            }
-                        ),
-                    }
-                ));
-            }
+                for (name, val) in &self.dependencies {
+                    output.push(format!(
+                        "{}{}{}",
+                        name.to_lowercase().black(),
+                        ": ".black(),
+                        match val {
+                            VMEvaluable::Bare(rv) =>
+                                serde_json::to_string(rv).unwrap().bright_cyan().to_string(),
+                            VMEvaluable::Block(b) => format!(
+                                "{}{}{}",
+                                b.original_block.obj_id.cyan(),
+                                ".".black(),
+                                format!("{:?}", b.opcode).bright_green(),
+                            ),
+                            VMEvaluable::Pointer(VMValuePointer::List { name, id }) => format!(
+                                "{}{}{} {}{}{}",
+                                "(".black(),
+                                "list".yellow(),
+                                ")".black(),
+                                id.to_string().cyan(),
+                                ".".black(),
+                                name.bright_yellow()
+                            ),
+                            VMEvaluable::Pointer(VMValuePointer::Variable { name, id }) => format!(
+                                "{}{}{} {}{}{}",
+                                "(".black(),
+                                "var".yellow(),
+                                ")".black(),
+                                id.to_string().cyan(),
+                                ".".black(),
+                                name.bright_yellow()
+                            ),
+                            VMEvaluable::Pointer(VMValuePointer::Broadcast { name, id }) =>
+                                format!(
+                                    "{}{}{} {}{}{}",
+                                    "(".black(),
+                                    "var".yellow(),
+                                    ")".black(),
+                                    id.to_string().cyan(),
+                                    ".".black(),
+                                    name.bright_yellow()
+                                ),
+                            VMEvaluable::Field(f) => format!(
+                                "{}{}{}{}",
+                                "[".black(),
+                                f.display_value.bright_cyan(),
+                                match &f.pointer {
+                                    Some(VMValuePointer::List { name, id }) => format!(
+                                        "{} {}{}{} {}{}{}",
+                                        ",".black(),
+                                        "(".black(),
+                                        "list".yellow(),
+                                        ")".black(),
+                                        id.to_string().cyan(),
+                                        ".".black(),
+                                        name.bright_yellow()
+                                    ),
+                                    Some(VMValuePointer::Variable { name, id }) => format!(
+                                        "{} {}{}{} {}{}{}",
+                                        ",".black(),
+                                        "(".black(),
+                                        "var".yellow(),
+                                        ")".black(),
+                                        id.to_string().cyan(),
+                                        ".".black(),
+                                        name.bright_yellow()
+                                    ),
+                                    Some(VMValuePointer::Broadcast { name, id }) => format!(
+                                        "{} {}{}{} {}{}{}",
+                                        ",".black(),
+                                        "(".black(),
+                                        "var".yellow(),
+                                        ")".black(),
+                                        id.to_string().cyan(),
+                                        ".".black(),
+                                        name.bright_yellow()
+                                    ),
+                                    None => "".to_string(),
+                                },
+                                "]".black()
+                            ),
+                        }
+                    ));
+                }
 
-            output.join(" ")
-        })
+                output.join(&", ".black().to_string())
+            },
+            ")".black()
+        )
     }
 }
 
