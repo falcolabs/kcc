@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use hashbrown::HashMap;
 use parking_lot::RwLock;
-use scratch_ast::model::{PrimitiveValue, RichValue};
+use scratch_ast::model::{Block, Field, PrimitiveValue, RichValue, ShadowValue, ValuePointer};
 
 use crate::vm::{
-    bytecode::{Expression, VMEvaluable, VMValuePointer},
     intepreter::{eval_exp, VMState},
+    internals::{StackExpression, VMEvaluable, VMField, VMValuePointer},
     ScratchError,
 };
 
@@ -28,7 +29,7 @@ pub fn rich_value_to_bool(rval: &RichValue) -> Result<bool, ScratchError> {
         .map_err(|e| ScratchError::type_error(e, format!("casting rich value {rval:?} to bool")))
 }
 
-impl Expression {
+impl StackExpression {
     #[inline]
     pub fn argraw(&self, argname: &str) -> Option<&VMEvaluable> {
         self.dependencies.get(argname)
@@ -91,6 +92,7 @@ impl Expression {
                 VMValuePointer::Broadcast { name, .. } => Ok(name.to_string()),
             },
             VMEvaluable::Block(b) => rich_value_to_string(&eval_exp(b, state)?),
+            VMEvaluable::Default => Ok("".into()),
         }
     }
 
@@ -127,6 +129,7 @@ impl Expression {
                 )),
             },
             VMEvaluable::Block(b) => rich_value_to_f64(&eval_exp(b, state)?),
+            VMEvaluable::Default => Ok(0.0.into()),
         }
     }
 
@@ -167,6 +170,7 @@ impl Expression {
                 )),
             },
             VMEvaluable::Block(b) => rich_value_to_bool(&eval_exp(b, state)?),
+            VMEvaluable::Default => Ok(false.into()),
         }
     }
 
@@ -197,6 +201,12 @@ impl Expression {
                 format!("cannot convert or evaluate block {argname}={b:#?} to a pointer"),
                 format!("fetfching '{argname}'={b} as pointer"),
             )),
+            VMEvaluable::Default => Err(ScratchError::type_error(
+                format!(
+                    "field {argname} contains marked its content as a pointer, but a pointer is not present"
+                ),
+                format!("fetfching '{argname}' as a pointer"),
+            )),
         }
     }
 
@@ -206,7 +216,7 @@ impl Expression {
         &self,
         argname: &str,
         state: &VMState,
-        exp: &Expression,
+        exp: &StackExpression,
     ) -> Result<f64, ScratchError> {
         self.argfloat(argname, state).map_err(|e| {
             e.push_not_found(
@@ -218,7 +228,11 @@ impl Expression {
 
     /// argraw with nice error.
     /// utility function.
-    pub fn sargraw(&self, argname: &str, exp: &Expression) -> Result<&VMEvaluable, ScratchError> {
+    pub fn sargraw(
+        &self,
+        argname: &str,
+        exp: &StackExpression,
+    ) -> Result<&VMEvaluable, ScratchError> {
         self.argraw(argname)
             .ok_or(ScratchError::not_found(
                 format!("argument '{argname}' not found"),
@@ -238,7 +252,7 @@ impl Expression {
         &self,
         argname: &str,
         state: &VMState,
-        exp: &Expression,
+        exp: &StackExpression,
     ) -> Result<String, ScratchError> {
         self.argstr(argname, state).map_err(|e| {
             e.push_not_found(
@@ -254,7 +268,7 @@ impl Expression {
         &self,
         argname: &str,
         state: &VMState,
-        exp: &Expression,
+        exp: &StackExpression,
     ) -> Result<bool, ScratchError> {
         self.argbool(argname, state).map_err(|e| {
             e.push_not_found(
@@ -264,7 +278,11 @@ impl Expression {
         })
     }
 
-    pub fn sargptr(&self, argname: &str, exp: &Expression) -> Result<VMValuePointer, ScratchError> {
+    pub fn sargptr(
+        &self,
+        argname: &str,
+        exp: &StackExpression,
+    ) -> Result<VMValuePointer, ScratchError> {
         self.argptr(argname).map_err(|e| {
             e.push_not_found(
                 format!("required argument {argname} not found"),
@@ -404,6 +422,7 @@ impl VMEvaluable {
                 VMValuePointer::Broadcast { name, ..} => Ok(RichValue::Broadcast(name.to_string())),
             },
             VMEvaluable::Block(b) => eval_exp(b, state),
+            VMEvaluable::Default => Ok("".into()),
         }
     }
 }
@@ -419,5 +438,120 @@ impl VMState {
         value: PrimitiveValue,
     ) -> Result<PrimitiveValue, ScratchError> {
         pointer.set_var(self, value)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fetch_dependencies(
+    block: &Block,
+    local_list_numid_map: &HashMap<String, usize>,
+    local_var_numid_map: &HashMap<String, usize>,
+    local_broadcast_numid_map: &HashMap<String, usize>,
+    global_list_numid_map: &HashMap<String, usize>,
+    global_var_numid_map: &HashMap<String, usize>,
+    global_broadcast_numid_map: &HashMap<String, usize>,
+    block_list: &std::collections::HashMap<String, Block>,
+) -> HashMap<String, VMEvaluable> {
+    let mut output = HashMap::new();
+    for (ik, iv) in &block.inputs {
+        output.insert(
+            ik.to_owned(),
+            VMEvaluable::new(
+                iv.value.to_owned(),
+                local_list_numid_map,
+                local_var_numid_map,
+                local_broadcast_numid_map,
+                global_list_numid_map,
+                global_var_numid_map,
+                global_broadcast_numid_map,
+                block_list,
+            ),
+        );
+    }
+    for (ik, Field { value, value_id }) in &block.fields {
+        output.insert(
+            ik.to_string(),
+            VMEvaluable::Field(VMField {
+                display_value: value.to_string(),
+                pointer: match ik.as_str() {
+                    "VARIABLE" => Some(VMValuePointer::Variable {
+                        name: value.to_string(),
+                        id: *local_var_numid_map.get(&value_id.clone().expect("Malformed field array, field does not have a varid reference")).unwrap_or(global_var_numid_map.get(&value_id.clone().unwrap()).expect("varid referenced by field not found")),
+                    }),
+                    "LIST" => Some(VMValuePointer::List {
+                        name: value.to_string(),
+                        id: *local_list_numid_map.get(&value_id.clone().expect("Malformed field array, field does not have a listid reference")).unwrap_or(global_list_numid_map.get(&value_id.clone().unwrap()).expect("listid referenced by field not found")),
+                    }),
+                    "BROADCAST_OPTION" => Some(VMValuePointer::Broadcast {
+                        name: value.to_string(),
+                        id: *local_broadcast_numid_map.get(&value_id.clone().expect("Malformed field array, field does not have a broadcastid reference")).unwrap_or(global_broadcast_numid_map.get(&value_id.clone().unwrap()).expect("broadcastid referenced by field not found")),
+                    }),
+                    _ => None,
+                },
+            }),
+        );
+    }
+    output
+}
+
+impl VMEvaluable {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        value: Option<ShadowValue>,
+        local_list_numid_map: &HashMap<String, usize>,
+        local_var_numid_map: &HashMap<String, usize>,
+        local_broadcast_numid_map: &HashMap<String, usize>,
+        global_list_numid_map: &HashMap<String, usize>,
+        global_var_numid_map: &HashMap<String, usize>,
+        global_broadcast_numid_map: &HashMap<String, usize>,
+        block_list: &std::collections::HashMap<String, Block>,
+    ) -> Self {
+        match value {
+            Some(v) => match v {
+                ShadowValue::Bare(b) => Self::Bare(b),
+                ShadowValue::Pointer(ValuePointer::List { name, id: str_id }) => {
+                    Self::Pointer(VMValuePointer::List {
+                        name,
+                        id: *local_list_numid_map.get(&str_id).unwrap_or(
+                            global_list_numid_map
+                                .get(&str_id)
+                                .expect("listid referenced by pointer not found"),
+                        ),
+                    })
+                }
+                ShadowValue::Pointer(ValuePointer::Variable { name, id: str_id }) => {
+                    Self::Pointer(VMValuePointer::Variable {
+                        name,
+                        id: *local_var_numid_map.get(&str_id).unwrap_or(
+                            global_var_numid_map
+                                .get(&str_id)
+                                .expect("varid referenced by pointer not found"),
+                        ),
+                    })
+                }
+                ShadowValue::Block(b) => {
+                    let block = block_list.get(&b.id).unwrap();
+                    Self::Block(StackExpression {
+                        opcode: block.block_type,
+                        dependencies: fetch_dependencies(
+                            block,
+                            local_list_numid_map,
+                            local_var_numid_map,
+                            local_broadcast_numid_map,
+                            global_list_numid_map,
+                            global_var_numid_map,
+                            global_broadcast_numid_map,
+                            block_list,
+                        ),
+                        original_block: Box::new({
+                            let mut o = block.to_owned();
+                            o.obj_id = b.id;
+                            o
+                        }),
+                    })
+                }
+            },
+            None => Self::Default,
+        }
     }
 }

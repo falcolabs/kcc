@@ -26,7 +26,7 @@ pub struct Shadow {
     /// 2 is a bare value, and 3 is a shadow but overwritten by a reporter.
     pub shadow_type: ShadowType,
     /// The value of the input
-    pub value: ShadowValue,
+    pub value: Option<ShadowValue>,
     /// The original value if it was obscured (`input_type` is 3)
     pub overridden_value: Option<ShadowValue>,
 }
@@ -118,7 +118,7 @@ pub struct ProcedurePrototype {
     )]
     /// A JSON string that contains an array of the defaults of the arguments;
     /// for string/number arguments, this is an empty string, and for boolean arguments it is false.
-    pub argument_defaults: Vec<RichValue>,
+    pub argument_defaults: Vec<PrimitiveValue>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -298,6 +298,18 @@ impl From<String> for PrimitiveValue {
 impl From<String> for RichValue {
     fn from(value: String) -> Self {
         Self::String(value)
+    }
+}
+
+impl From<&str> for PrimitiveValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl From<&str> for RichValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
     }
 }
 

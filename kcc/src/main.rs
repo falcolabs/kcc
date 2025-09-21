@@ -15,11 +15,11 @@
  * GNU General Public License or the DORAEMON IS THE BEST ANIME
  * PUBLIC LICENSE for enforcable terms.
  *
- * You should have also received a copy of the DORAEMON IS THE BEST
+ * You should have received a copy of the DORAEMON IS THE BEST
  * ANIME PUBLIC LICENSE along with this program.  If not, see
  * <https://github.com/falcolabs/kcc/blob/main/LICENSE_DORAEMON/>.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have also received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 pub mod vm;
@@ -41,14 +41,16 @@ pub fn main() {
     }
     let temp_dir = tempfile::tempdir()
         .expect("failed to create a temporary directory to extract project contents");
-    zip_extract::extract(
-        File::open(&args[1]).unwrap(),
-        // TODO: use temp directory.
-        temp_dir.path(),
-        true,
-    )
-    .unwrap();
+    if !std::fs::exists(&args[1]).unwrap() {
+        error!("file {} does not exist", &args[1]);
+        std::process::exit(1);
+    }
+    let project_file = File::open(&args[1]).unwrap();
+    zip::ZipArchive::new(project_file)
+        .unwrap()
+        .extract(temp_dir.path())
+        .unwrap();
     let prj = load_from_directory(temp_dir.path()).expect("unable to load project");
     debug!("Parsing completed, starting execution");
-    vm::bytecode::VMGlobalState::run(prj.into());
+    vm::run(prj.into());
 }

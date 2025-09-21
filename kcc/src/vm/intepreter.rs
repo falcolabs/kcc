@@ -12,12 +12,12 @@ use scratch_ast::{
     model::{BlockType, RichValue},
 };
 
-use crate::vm::bytecode::{Expression, VMGlobalState, VMLocalState, VMThread};
+use crate::vm::internals::{Expression, StackExpression, VMGlobalState, VMLocalState, VMThread};
 
 use super::ScratchResult;
 
 const START_OF_2000_TIMESTAMP: u64 = 946684800;
-const MICROSECS_IN_A_DAY: u64 = 1000 * 60 * 60 * 24;
+const MILISECS_IN_A_DAY: u64 = 1000 * 60 * 60 * 24;
 
 #[derive(Clone, Debug)]
 pub struct VMState {
@@ -30,20 +30,21 @@ pub fn exec_thread(
     global_state: Arc<RwLock<VMGlobalState>>,
     local_state: Arc<RwLock<VMLocalState>>,
 ) -> ScratchResult {
+    let state = VMState {
+        global_state: Arc::clone(&global_state),
+        local_state: Arc::clone(&local_state),
+    };
     for stmt in thread.code {
-        eval_exp(
-            &stmt,
-            &VMState {
-                global_state: Arc::clone(&global_state),
-                local_state: Arc::clone(&local_state),
-            },
-        )?;
+        match stmt {
+            Expression::Stack(s) => eval_exp(&s, &state)?,
+            _ => todo!(),
+        };
     }
     Ok(())
 }
 
 #[allow(unused)]
-pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, ScratchError> {
+pub fn eval_exp(exp: &StackExpression, state: &VMState) -> Result<RichValue, ScratchError> {
     debug!("exec {}", exp);
     match exp.opcode {
         BlockType::MotionMoveSteps => todo!(),
@@ -94,13 +95,13 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, ScratchE
         BlockType::SoundClearEffects => todo!(),
         BlockType::SoundChangeVolumeBy => todo!(),
         BlockType::SoundSetVolumeTo => todo!(),
-        BlockType::EventWhenFlagClicked => Ok(RichValue::Integer(0)),
+        BlockType::EventWhenFlagClicked => Ok(RichValue::success()),
         BlockType::EventWhenKeyPressed => todo!(),
         BlockType::EventWhenStageClicked => todo!(),
         BlockType::EventWhenThisSpriteClicked => todo!(),
         BlockType::EventWhenBackdropSwitchesTo => todo!(),
         BlockType::EventWhenGreaterThan => todo!(),
-        BlockType::EventWhenBroadcastReceived => todo!(),
+        BlockType::EventWhenBroadcastReceived => Ok(RichValue::success()),
         BlockType::EventBroadcast => todo!(),
         BlockType::EventBroadcastandWait => todo!(),
         BlockType::ControlWait => todo!(),
@@ -134,7 +135,7 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, ScratchE
                     )
                 })?
                 .as_millis() as f64
-                / MICROSECS_IN_A_DAY as f64,
+                / MILISECS_IN_A_DAY as f64,
         )),
         BlockType::SensingUsername => todo!(),
         BlockType::OperatorAdd => {
@@ -356,7 +357,7 @@ pub fn eval_exp(exp: &Expression, state: &VMState) -> Result<RichValue, ScratchE
         BlockType::DataListShow => todo!(),
         BlockType::DataListHide => todo!(),
 
-        BlockType::ProceduresDefinition => Ok(RichValue::Integer(0)),
+        BlockType::ProceduresDefinition => Ok(RichValue::success()),
         BlockType::ProceduresCall => todo!(),
         BlockType::ArgumentReporterStringNumber => todo!(),
         BlockType::ArgumentReporterBoolean => todo!(),

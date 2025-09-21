@@ -1,0 +1,8 @@
+name: kcc
+
+devfiles:
+  - rm -rf __tmp
+  - unzip invest.sb3 -d __tmp
+
+dev:
+  - RUST_LOG=debug cargo run -- invest.sb3

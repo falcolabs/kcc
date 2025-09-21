@@ -1,12 +1,17 @@
 use std::sync::{atomic::AtomicUsize, Arc};
 
-use crate::vm::bytecode::*;
+use crate::vm::{argaccess::fetch_dependencies, internals::*};
 use hashbrown::HashMap;
 use parking_lot::RwLock;
-use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
-use scratch_ast::model::{self, Block, BlockType, PrimitiveValue, Target};
+use rayon::iter::{
+    IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelBridge, ParallelIterator,
+};
+use scratch_ast::model::{
+    self, Block, BlockType, Mutation, PrimitiveValue, ProcedureCall, ProcedurePrototype, Target,
+};
 
 static ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static PROCCODE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const HAT_BLOCKS: [BlockType; 9] = [
     BlockType::EventWhenFlagClicked,
     BlockType::EventWhenKeyPressed,
@@ -27,7 +32,10 @@ fn extract_threads(
     global_varid_to_numid: Arc<HashMap<String, usize>>,
     global_listid_to_numid: Arc<HashMap<String, usize>>,
     global_broadcastid_to_numid: Arc<HashMap<String, usize>>,
-) -> Vec<VMThread> {
+    global_mutation_proccode_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+    global_mutation_argname_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+    global_mutation_argid_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+) -> VMSourceCode {
     let bl = Arc::new(block_list);
     let hats: Vec<&String> = bl
         .par_iter()
@@ -50,6 +58,9 @@ fn extract_threads(
                 Arc::clone(&global_varid_to_numid),
                 Arc::clone(&global_listid_to_numid),
                 Arc::clone(&global_broadcastid_to_numid),
+                Arc::clone(&global_mutation_proccode_to_numid),
+                Arc::clone(&global_mutation_argname_to_numid),
+                Arc::clone(&global_mutation_argid_to_numid),
             )
         })
         .collect()
@@ -65,7 +76,10 @@ fn extract_thread(
     global_varid_to_numid: Arc<HashMap<String, usize>>,
     global_listid_to_numid: Arc<HashMap<String, usize>>,
     global_broadcastid_to_numid: Arc<HashMap<String, usize>>,
-) -> VMThread {
+    global_mutation_proccode_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+    global_mutation_argname_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+    global_mutation_argid_to_numid: Arc<RwLock<HashMap<String, usize>>>,
+) -> (ThreadTrigger, VMThread) {
     let mut code = Vec::new();
     let mut next_id: &Option<String> = &Some(hat_block_id);
     let mut current_block: &Block;
@@ -76,7 +90,7 @@ fn extract_thread(
                 id
             )
         });
-        code.push(Expression {
+        code.push(Expression::Stack(StackExpression {
             opcode: current_block.block_type,
             dependencies: fetch_dependencies(
                 current_block,
@@ -93,19 +107,97 @@ fn extract_thread(
                 o.obj_id = id.to_string();
                 o
             }),
-        });
+        }));
         next_id = &current_block.next_id;
     }
 
-    VMThread {
-        stack: Vec::new(),
-        code,
+    let mut custom_block_arguments = HashMap::new();
+    let trigger: ThreadTrigger = ThreadTrigger::GreenFlag;
+    if let Some(Expression::Stack(StackExpression {
+        opcode,
+        dependencies,
+        ..
+    })) = code.get(0)
+    {
+        if opcode == &BlockType::ProceduresDefinition {
+            if let VMEvaluable::Block(prototype) = dependencies.get("custom_block").expect("Malformed custom block definition, definition hat block did not point to its prototype") {
+                if let Mutation::ProcedurePrototype(ProcedurePrototype { proccode, arguments_ids, argument_names, argument_defaults, ..}) =  prototype.original_block.mutation.as_ref().unwrap() {
+                    global_mutation_proccode_to_numid.write().entry(proccode.to_string()).or_insert_with(|| PROCCODE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                    for ((name, strid), default_value) in std::iter::zip(std::iter::zip(argument_names, arguments_ids), argument_defaults) {
+                        let aid = if let Some(a) = global_mutation_argid_to_numid.read().get(strid) {
+                            *a
+                        } else {
+                            ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        };
+                        global_mutation_argid_to_numid.write().insert(strid.to_owned(), aid);
+                        global_mutation_argname_to_numid.write().insert(name.to_string(), aid);
+                        custom_block_arguments.insert(aid, default_value.to_owned());
+                    }
+                }
+            }
+        }
+        code.par_iter_mut().for_each(|exp| {
+            if let Expression::Stack(StackExpression {
+                opcode,
+                dependencies,
+                original_block,
+            }) = exp
+            {
+                if opcode == &BlockType::ProceduresCall {
+                    if let Mutation::ProcedureCall(ProcedureCall { proccode, .. }) =
+                        original_block.mutation.as_ref().unwrap()
+                    {
+                        global_mutation_proccode_to_numid
+                            .write()
+                            .entry(proccode.to_string())
+                            .or_insert_with(|| {
+                                PROCCODE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            });
+
+                        *exp = Expression::InvokeCustomBlock {
+                            target: match global_mutation_proccode_to_numid.read().get(proccode) {
+                                Some(s) => *s,
+                                None => {
+                                    let numproc = PROCCODE_COUNTER
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    global_mutation_proccode_to_numid
+                                        .write()
+                                        .insert(proccode.to_string(), numproc)
+                                        .expect("making new custom block id failed");
+                                    numproc
+                                }
+                            },
+                            arguments: dependencies
+                                .iter()
+                                .map(|(strid, val)| {
+                                    let aid = *global_mutation_argid_to_numid
+                                        .write()
+                                        .entry(strid.to_owned())
+                                        .or_insert_with(|| {
+                                            ID_COUNTER
+                                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                        });
+                                    (aid, val.to_owned())
+                                })
+                                .collect(),
+                        };
+                    }
+                }
+            }
+        });
     }
+    (
+        trigger,
+        VMThread {
+            code,
+            custom_block_arguments,
+        },
+    )
 }
 
 pub struct VMStartup {
     pub gstate: VMGlobalState,
-    pub targets: Vec<(VMLocalState, Vec<VMThread>)>,
+    pub targets: Vec<(VMLocalState, VMSourceCode)>,
 }
 
 impl From<model::Project> for VMStartup {
@@ -116,7 +208,14 @@ impl From<model::Project> for VMStartup {
         let mut global_varid_to_numid: Arc<HashMap<String, usize>> = Arc::new(HashMap::new());
         let mut global_listid_to_numid: Arc<HashMap<String, usize>> = Arc::new(HashMap::new());
         let mut global_broadcastid_to_numid: Arc<HashMap<String, usize>> = Arc::new(HashMap::new());
-        let mut target_tuple: Vec<(VMLocalState, Vec<VMThread>)> = Vec::new();
+
+        let global_mutation_proccode_to_numid: Arc<RwLock<HashMap<String, usize>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let global_mutation_argname_to_numid: Arc<RwLock<HashMap<String, usize>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let global_mutation_argid_to_numid: Arc<RwLock<HashMap<String, usize>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let mut target_tuple: Vec<(VMLocalState, VMSourceCode)> = Vec::new();
 
         for t in value.targets {
             match t {
@@ -209,9 +308,9 @@ impl From<model::Project> for VMStartup {
                             variables: numid_to_varvalue,
                             lists: numid_to_listvalue,
                             broadcasts: broadcastid_to_value,
-                            list_numid_map: Arc::clone(&listid_to_numid),
-                            var_numid_map: Arc::clone(&varid_to_numid),
-                            broadcast_numid_map: Arc::clone(&broadcastid_to_numid),
+                            listname_to_numid: Arc::clone(&listid_to_numid),
+                            varname_to_numi: Arc::clone(&varid_to_numid),
+                            broadcastname_to_numid: Arc::clone(&broadcastid_to_numid),
                         },
                         extract_threads(
                             s.blocks.clone(),
@@ -221,6 +320,9 @@ impl From<model::Project> for VMStartup {
                             Arc::clone(&global_varid_to_numid),
                             Arc::clone(&global_listid_to_numid),
                             Arc::clone(&global_broadcastid_to_numid),
+                            Arc::clone(&global_mutation_proccode_to_numid),
+                            Arc::clone(&global_mutation_argname_to_numid),
+                            Arc::clone(&global_mutation_argid_to_numid),
                         ),
                     ))
                 }
@@ -310,9 +412,9 @@ impl From<model::Project> for VMStartup {
                             variables: HashMap::new(),
                             lists: HashMap::new(),
                             broadcasts: HashMap::new(),
-                            list_numid_map: Arc::clone(&global_varid_to_numid),
-                            var_numid_map: Arc::clone(&global_listid_to_numid),
-                            broadcast_numid_map: Arc::clone(&global_broadcastid_to_numid),
+                            listname_to_numid: Arc::clone(&global_varid_to_numid),
+                            varname_to_numi: Arc::clone(&global_listid_to_numid),
+                            broadcastname_to_numid: Arc::clone(&global_broadcastid_to_numid),
                         },
                         extract_threads(
                             s.blocks.clone(),
@@ -322,6 +424,9 @@ impl From<model::Project> for VMStartup {
                             Arc::clone(&global_varid_to_numid),
                             Arc::clone(&global_listid_to_numid),
                             Arc::clone(&global_broadcastid_to_numid),
+                            Arc::clone(&global_mutation_proccode_to_numid),
+                            Arc::clone(&global_mutation_argname_to_numid),
+                            Arc::clone(&global_mutation_argid_to_numid),
                         ),
                     ))
                 }
@@ -333,9 +438,9 @@ impl From<model::Project> for VMStartup {
                 lists: global_listid_to_value,
                 variables: global_varid_to_value,
                 broadcasts: global_broadcastid_to_value,
-                list_numid_map: Arc::clone(&global_listid_to_numid),
-                var_numid_map: Arc::clone(&global_varid_to_numid),
-                broadcast_numid_map: Arc::clone(&global_broadcastid_to_numid),
+                listname_to_numid: Arc::clone(&global_listid_to_numid),
+                varname_to_numid: Arc::clone(&global_varid_to_numid),
+                broadcastname_to_numid: Arc::clone(&global_broadcastid_to_numid),
             },
             targets: target_tuple,
         }
