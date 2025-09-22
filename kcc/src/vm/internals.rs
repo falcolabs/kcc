@@ -4,7 +4,7 @@ use hashbrown::HashMap;
 use parking_lot::RwLock;
 use scratch_ast::prelude::*;
 
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 pub enum ThreadTrigger {
     GreenFlag,
     Broadcast(String),
@@ -70,6 +70,7 @@ pub struct VMGlobalState {
     pub listname_to_numid: Arc<HashMap<String, usize>>,
     pub varname_to_numid: Arc<HashMap<String, usize>>,
     pub broadcastname_to_numid: Arc<HashMap<String, usize>>,
+    pub mutationname_to_numid: Arc<HashMap<String, usize>>,
 }
 
 #[derive(Debug)]

@@ -57,8 +57,10 @@ pub struct Field {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase", untagged))]
 /// The Define block, its inner part, a Custom block invocation, or Stop block.
 pub enum Mutation {
-    ProcedureCall(ProcedureCall),
+    // ProcedurePrototype MUST BE THE FIRST ITEM.
+    // Ordering is important for parsing, and ScratchVM does not use inner tags.
     ProcedurePrototype(ProcedurePrototype),
+    ProcedureCall(ProcedureCall),
     // Really?
     ControlStop(ControlStopMutation),
 }
@@ -359,12 +361,48 @@ impl From<RichValue> for PrimitiveValue {
                 PrimitiveValue::String("false".to_string())
             }
             RichValue::Number(n) => PrimitiveValue::Number(n),
-            RichValue::PositiveInteger(n) => PrimitiveValue::Integer(n.into()),
+            RichValue::PositiveInteger(n) => PrimitiveValue::Integer(n as i64),
             RichValue::Integer(n) => PrimitiveValue::Integer(n),
             RichValue::PositiveNumber(n) => PrimitiveValue::Number(n),
             RichValue::String(n) => PrimitiveValue::String(n),
             RichValue::Color(n) => PrimitiveValue::String(n),
             RichValue::Broadcast(n) => PrimitiveValue::String(n),
+        }
+    }
+}
+
+impl From<&PrimitiveValue> for RichValue {
+    fn from(value: &PrimitiveValue) -> RichValue {
+        match value {
+            PrimitiveValue::Number(n) => RichValue::Number(*n),
+            PrimitiveValue::Integer(n) => RichValue::Integer(*n),
+            PrimitiveValue::String(s) => {
+                if s.len() == 7 && s.starts_with("#") {
+                    return RichValue::Color(s.to_string());
+                }
+                RichValue::String(s.to_string())
+            }
+        }
+    }
+}
+
+impl From<&RichValue> for PrimitiveValue {
+    fn from(value: &RichValue) -> Self {
+        match value {
+            RichValue::Angle(n) => PrimitiveValue::Number(*n),
+            RichValue::Boolean(n) => {
+                if *n {
+                    return PrimitiveValue::String("true".to_string());
+                }
+                PrimitiveValue::String("false".to_string())
+            }
+            RichValue::Number(n) => PrimitiveValue::Number(*n),
+            RichValue::PositiveInteger(n) => PrimitiveValue::Integer(*n as i64),
+            RichValue::Integer(n) => PrimitiveValue::Integer(*n),
+            RichValue::PositiveNumber(n) => PrimitiveValue::Number(*n),
+            RichValue::String(n) => PrimitiveValue::String(n.to_string()),
+            RichValue::Color(n) => PrimitiveValue::String(n.to_string()),
+            RichValue::Broadcast(n) => PrimitiveValue::String(n.to_string()),
         }
     }
 }

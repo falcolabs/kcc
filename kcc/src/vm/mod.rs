@@ -18,11 +18,8 @@ pub fn run(startup: VMStartup) {
     std::thread::scope(|scope| {
         for (target, threads) in startup.targets {
             let local_state = Arc::new(RwLock::new(target));
-            for thread in threads {
-                let cgs = Arc::clone(&global_state);
-                let cls = Arc::clone(&local_state);
-                scope.spawn(move || intepreter::exec_thread(thread, cgs, cls).unwrap());
-            }
+            let cgs = Arc::clone(&global_state);
+            scope.spawn(move || intepreter::exec_source(threads, cgs, local_state).unwrap());
         }
     });
 }

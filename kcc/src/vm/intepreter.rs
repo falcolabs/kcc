@@ -12,7 +12,9 @@ use scratch_ast::{
     model::{BlockType, RichValue},
 };
 
-use crate::vm::internals::{Expression, StackExpression, VMGlobalState, VMLocalState, VMThread};
+use crate::vm::internals::{
+    Expression, StackExpression, ThreadTrigger, VMGlobalState, VMLocalState, VMSourceCode, VMThread,
+};
 
 use super::ScratchResult;
 
@@ -21,25 +23,70 @@ const MILISECS_IN_A_DAY: u64 = 1000 * 60 * 60 * 24;
 
 #[derive(Clone, Debug)]
 pub struct VMState {
+    pub source_code: Arc<VMSourceCode>,
     pub global_state: Arc<RwLock<VMGlobalState>>,
     pub local_state: Arc<RwLock<VMLocalState>>,
+    pub curent_thread: Arc<RwLock<VMThread>>,
 }
 
-pub fn exec_thread(
-    thread: VMThread,
+pub fn exec_source(
+    threads: VMSourceCode,
     global_state: Arc<RwLock<VMGlobalState>>,
     local_state: Arc<RwLock<VMLocalState>>,
 ) -> ScratchResult {
-    let state = VMState {
-        global_state: Arc::clone(&global_state),
-        local_state: Arc::clone(&local_state),
-    };
-    for stmt in thread.code {
-        match stmt {
-            Expression::Stack(s) => eval_exp(&s, &state)?,
+    std::thread::scope(|scope| {
+        for (trigger, thread) in threads.iter() {
+            if trigger == &ThreadTrigger::GreenFlag {
+                let state = Arc::new(VMState {
+                    global_state: Arc::clone(&global_state),
+                    local_state: Arc::clone(&local_state),
+                    source_code: Arc::new(threads.clone()),
+                    curent_thread: Arc::new(RwLock::new(thread.clone())),
+                });
+                let cs = Arc::clone(&state);
+                scope.spawn(move || exec_thread(scope, &cs));
+            }
+        }
+    });
+
+    Ok(())
+}
+
+pub fn exec_thread(scope: &std::thread::Scope, state: &VMState) -> ScratchResult {
+    for t in state.curent_thread.read().code.iter() {
+        match t {
+            Expression::Stack(s) => {
+                eval_exp(s, &state)?;
+            }
+            Expression::InvokeCustomBlock { target, arguments } => {
+                let mut nthread = state
+                    .source_code
+                    .get(&ThreadTrigger::Mutation(*target))
+                    .ok_or(ScratchError::not_found(
+                        format!("custom block {target} not found"),
+                        format!("triggering custom block {target}"),
+                    ))?
+                    .clone();
+                for (id, val) in arguments {
+                    nthread.custom_block_arguments.insert(
+                        *id,
+                        val.eval(state).expect("unable to evaluate value").into(),
+                    );
+                }
+                exec_thread(
+                    scope,
+                    &VMState {
+                        global_state: Arc::clone(&state.global_state),
+                        local_state: Arc::clone(&state.local_state),
+                        source_code: Arc::clone(&state.source_code.clone()),
+                        curent_thread: Arc::new(RwLock::new(nthread)),
+                    },
+                )?;
+            }
             _ => todo!(),
         };
     }
+
     Ok(())
 }
 
@@ -358,11 +405,22 @@ pub fn eval_exp(exp: &StackExpression, state: &VMState) -> Result<RichValue, Scr
         BlockType::DataListHide => todo!(),
 
         BlockType::ProceduresDefinition => Ok(RichValue::success()),
-        BlockType::ProceduresCall => todo!(),
-        BlockType::ArgumentReporterStringNumber => todo!(),
-        BlockType::ArgumentReporterBoolean => todo!(),
+        BlockType::ProceduresCall => panic!("this error should be unreachable. If you see this error, there is an error in the transformer."),
+        BlockType::ArgumentReporterStringNumber | BlockType::ArgumentReporterBoolean => {
+            let bref = exp.argstr("VALUE", state)?;
+            let val = state.curent_thread.read().custom_block_arguments.get(
+                state.global_state
+                    .read()
+                    .mutationname_to_numid
+                    .get(&bref)
+                    .ok_or(ScratchError::not_found("custom block argument not found", format!("accessing custom block argument {}", bref))
+                )?
+            ).ok_or(ScratchError::not_found("custom block argument not found", format!("accessing custom block argument {}", bref)))?.into();
+            debug!("accessed variable {bref}, got {val:?}");
+            Ok(val)
+        },
+        BlockType::ProceduresPrototype => Ok(RichValue::success()),
 
-        BlockType::ProceduresPrototype => todo!(),
         BlockType::ArgumentEditorBoolean => todo!(),
         BlockType::ArgumentEditorStringNumber => todo!(),
         BlockType::Note => todo!(),

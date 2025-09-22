@@ -3,9 +3,7 @@ use std::sync::{atomic::AtomicUsize, Arc};
 use crate::vm::{argaccess::fetch_dependencies, internals::*};
 use hashbrown::HashMap;
 use parking_lot::RwLock;
-use rayon::iter::{
-    IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelBridge, ParallelIterator,
-};
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use scratch_ast::model::{
     self, Block, BlockType, Mutation, PrimitiveValue, ProcedureCall, ProcedurePrototype, Target,
 };
@@ -112,7 +110,7 @@ fn extract_thread(
     }
 
     let mut custom_block_arguments = HashMap::new();
-    let trigger: ThreadTrigger = ThreadTrigger::GreenFlag;
+    let mut trigger: ThreadTrigger = ThreadTrigger::GreenFlag;
     if let Some(Expression::Stack(StackExpression {
         opcode,
         dependencies,
@@ -122,7 +120,15 @@ fn extract_thread(
         if opcode == &BlockType::ProceduresDefinition {
             if let VMEvaluable::Block(prototype) = dependencies.get("custom_block").expect("Malformed custom block definition, definition hat block did not point to its prototype") {
                 if let Mutation::ProcedurePrototype(ProcedurePrototype { proccode, arguments_ids, argument_names, argument_defaults, ..}) =  prototype.original_block.mutation.as_ref().unwrap() {
-                    global_mutation_proccode_to_numid.write().entry(proccode.to_string()).or_insert_with(|| PROCCODE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                    trigger = ThreadTrigger::Mutation(
+                            *global_mutation_proccode_to_numid
+                                .write()
+                                .entry(proccode.to_string())
+                                .or_insert_with(|| {
+                                    PROCCODE_COUNTER
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                }),
+                        );
                     for ((name, strid), default_value) in std::iter::zip(std::iter::zip(argument_names, arguments_ids), argument_defaults) {
                         let aid = if let Some(a) = global_mutation_argid_to_numid.read().get(strid) {
                             *a
@@ -136,7 +142,7 @@ fn extract_thread(
                 }
             }
         }
-        code.par_iter_mut().for_each(|exp| {
+        for exp in code.iter_mut() {
             if let Expression::Stack(StackExpression {
                 opcode,
                 dependencies,
@@ -184,7 +190,7 @@ fn extract_thread(
                     }
                 }
             }
-        });
+        }
     }
     (
         trigger,
@@ -441,6 +447,10 @@ impl From<model::Project> for VMStartup {
                 listname_to_numid: Arc::clone(&global_listid_to_numid),
                 varname_to_numid: Arc::clone(&global_varid_to_numid),
                 broadcastname_to_numid: Arc::clone(&global_broadcastid_to_numid),
+                mutationname_to_numid: Arc::new({
+                    let x = global_mutation_argname_to_numid.read().clone();
+                    x
+                }),
             },
             targets: target_tuple,
         }
